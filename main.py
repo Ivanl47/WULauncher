@@ -1,4 +1,4 @@
- import minecraft_launcher_lib as mll
+import minecraft_launcher_lib as mll
 import subprocess
 import os
 
