@@ -20,15 +20,13 @@ def install_minecraft_version(version, directory):
 def generate_launch_command(version, directory, auth_data):
     return mll.command.get_minecraft_command(version, directory, auth_data)
 
-def launch_minecraft(command, on_complete):
-    process = subprocess.Popen(command)
+def launch_minecraft(command):
+    subprocess.Popen(command)
     print("Minecraft запущено!")
-    process.wait()  # Чекаємо завершення Minecraft
-    on_complete()  # Викликаємо перезапуск лаунчера
 
-def launch_minecraft_game(directory, version, auth_data, on_install_complete, on_complete):
+def launch_minecraft_game(directory, version, auth_data, on_complete):
     directory = setup_minecraft_directory(directory)
     install_minecraft_version(version, directory)
-    on_install_complete()  # Закриваємо лаунчер після встановлення
     command = generate_launch_command(version, directory, auth_data)
-    launch_minecraft(command, on_complete)  # Запускаємо гру і чекаємо її завершення
+    launch_minecraft(command)
+    on_complete()  # Викликаємо функцію зворотного виклику після завершення
