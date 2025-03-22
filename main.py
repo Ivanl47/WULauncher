@@ -7,7 +7,6 @@ import os
 import json
 import nbtlib
 from nbtlib.tag import Compound, List, String, Int
-from launcher import launch_minecraft_game
 
 # Ініціалізація Pygame
 pygame.init()
@@ -62,20 +61,16 @@ def save_config(directory, username, language, ram):
 
 # Функція для додавання сервера до servers.dat
 def add_predefined_server(directory):
-    # Переконаємося, що директорія існує
     os.makedirs(directory, exist_ok=True)
     servers_file = os.path.join(directory, "servers.dat")
     
-    # --- ПОЛЕ ДЛЯ ВКАЗАННЯ АДРЕСИ ТА ПОРТУ СЕРВЕРА ---
     server_data = {
         "name": "WebUniverseServer",
         "ip": "ivanl47.aternos.me:42309",
         "port": 42309
     }
-    # --- КІНЕЦЬ ПОЛЯ ДЛЯ ЗМІНИ ---
 
     try:
-        # Завантажуємо існуючий файл servers.dat
         server_list = List[Compound]()
         if os.path.exists(servers_file):
             try:
@@ -86,14 +81,12 @@ def add_predefined_server(directory):
             except Exception as e:
                 print(f"Помилка при читанні servers.dat: {e}. Створюємо новий файл.")
 
-        # Перевіряємо, чи сервер уже є в списку
         server_exists = any(
             server["ip"] == server_data["ip"] and int(server.get("port", 25565)) == server_data["port"]
             for server in server_list
         )
 
         if not server_exists:
-            # Додаємо новий сервер
             new_server = Compound({
                 "name": String(server_data["name"]),
                 "ip": String(server_data["ip"]),
@@ -101,27 +94,15 @@ def add_predefined_server(directory):
             })
             server_list.append(new_server)
             print(f"Додано сервер: {server_data['name']} ({server_data['ip']})")
-
-            # Створюємо або оновлюємо NBT-файл
             nbt_data = Compound({"servers": server_list})
             nbt_file = nbtlib.File(nbt_data)
-            # Зберігаємо файл без стиснення
             try:
-                # Спробуємо використати параметр gzipped=False
                 nbt_file.save(servers_file, gzipped=False)
             except TypeError:
-                # Якщо параметр gzipped не підтримується, просто зберігаємо
                 nbt_file.save(servers_file)
             print(f"Файл servers.dat оновлено: {servers_file}")
         else:
             print(f"Сервер {server_data['ip']} уже є в списку")
-
-        # Перевіряємо, чи файл створений
-        if os.path.exists(servers_file):
-            updated_nbt = nbtlib.load(servers_file)
-            print(f"Оновлений список серверів: {updated_nbt['servers']}")
-        else:
-            print(f"Файл servers.dat НЕ створений у {servers_file}")
 
     except Exception as e:
         print(f"Помилка при додаванні сервера: {e}")
@@ -134,7 +115,11 @@ fake_auth = {
     "uuid": "",
     "access_token": ""
 }
-version = "1.20.1"
+minecraft_version = "1.20.1"
+forge_version = "1.20.1-47.2.0"  # Змінено на стабільну версію
+
+# Імпорт із launcher.py після визначення змінних
+from launcher import install_and_launch_forge
 
 # Стан завантаження
 is_loading = False
@@ -300,15 +285,16 @@ english_button_rect = pygame.Rect(50, 310, 400, 100)
 ukrainian_button_rect = pygame.Rect(550, 310, 400, 100)
 ram_slider_rect = pygame.Rect(50, 460, 700, 20)
 
-# Функція для запуску Minecraft при натисканні кнопки
+# Функція для запуску Minecraft із Forge при натисканні кнопки
 def on_play_button_clicked():
     global is_loading, minecraft_directory, fake_auth
     minecraft_directory = input_path_text
     fake_auth["username"] = input_username_text
     set_minecraft_options(minecraft_directory, current_language, ram_value)
     add_predefined_server(minecraft_directory)
+    print(f"Запускаємо Forge з параметрами: directory={minecraft_directory}, version={minecraft_version}, forge={forge_version}, username={fake_auth['username']}")
     is_loading = True
-    thread = threading.Thread(target=launch_minecraft_game, args=(minecraft_directory, version, fake_auth, on_launch_complete))
+    thread = threading.Thread(target=install_and_launch_forge, args=(minecraft_directory, minecraft_version, forge_version, fake_auth, on_launch_complete))
     thread.start()
 
 # Основний цикл
