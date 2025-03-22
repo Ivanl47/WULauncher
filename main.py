@@ -1,4 +1,3 @@
-# main.py
 import pygame
 import sys
 import webbrowser
@@ -6,10 +5,22 @@ import threading
 import os
 import json
 import nbtlib
+import subprocess
+import tkinter as tk
+from tkinter import filedialog
+import shutil  # Для копіювання файлу скіна
 from nbtlib.tag import Compound, List, String, Int
+import requests  # Для завантаження Java
+import zipfile  # Для розпакування Java на Windows
+import platform  # Для визначення ОС і архітектури
+import tarfile  # Для розпакування Java на Linux/macOS
 
 # Ініціалізація Pygame
 pygame.init()
+
+# Ініціалізація Tkinter (для вибору файлу)
+root = tk.Tk()
+root.withdraw()  # Приховуємо основне вікно Tkinter
 
 # Налаштування вікна
 WINDOW_WIDTH = 1920
@@ -28,7 +39,7 @@ LIGHT_PURPLE = (200, 162, 255)
 # Завантаження шрифту
 font_path = "source/fonts/Minecraft.ttf"
 title_font = pygame.font.Font(font_path, 100)
-button_font = pygame.font.Font(font_path, 60)
+button_font = pygame.font.Font(font_path, 40)  # Зменшено з 60 до 40
 profile_font = pygame.font.Font(font_path, 40)
 settings_title_font = pygame.font.Font(font_path, 33)
 input_font = pygame.font.Font(font_path, 36)
@@ -40,21 +51,28 @@ def load_config():
         "minecraft_directory": r"minecraft_folder",
         "username": "Player",
         "language": "en_us",
-        "ram": 8
+        "ram": 8,
+        "skin_path": ""  # Додаємо шлях до скіна
     }
     if os.path.exists(config_file):
         with open(config_file, "r") as f:
-            return json.load(f)
+            config = json.load(f)
+            # Додаємо відсутні ключі з default_config
+            for key, value in default_config.items():
+                if key not in config:
+                    config[key] = value
+            return config
     return default_config
 
 # Функція для збереження конфігурації
-def save_config(directory, username, language, ram):
+def save_config(directory, username, language, ram, skin_path):
     config_file = "config.json"
     config = {
         "minecraft_directory": directory,
         "username": username,
         "language": language,
-        "ram": ram
+        "ram": ram,
+        "skin_path": skin_path
     }
     with open(config_file, "w") as f:
         json.dump(config, f, indent=4)
@@ -116,7 +134,8 @@ fake_auth = {
     "access_token": ""
 }
 minecraft_version = "1.20.1"
-forge_version = "1.20.1-47.2.0"  # Змінено на стабільну версію
+forge_version = "1.20.1-47.3.0"  # Оновлено до 47.3.0 для сумісності з модами
+skin_path = config["skin_path"]  # Шлях до вибраного скіна
 
 # Імпорт із launcher.py після визначення змінних
 from launcher import install_and_launch_forge
@@ -141,9 +160,164 @@ ram_value = config["ram"]
 RAM_MIN = 1
 RAM_MAX = 16
 
-def on_launch_complete():
+# Стан для скіна
+skin_image = None
+if skin_path and os.path.exists(skin_path):
+    try:
+        skin_image = pygame.image.load(skin_path)
+        skin_image = pygame.transform.scale(skin_image, (64, 64))  # Масштабуємо для відображення
+    except Exception as e:
+        print(f"Помилка при завантаженні скіна: {e}")
+        skin_image = None
+
+# Функція для перевірки прав доступу до директорії
+def check_directory_permissions(directory):
+    """Перевіряє, чи є права на запис у вказану директорію."""
+    try:
+        # Створюємо директорію, якщо її немає
+        os.makedirs(directory, exist_ok=True)
+        # Перевіряємо права на запис, створюючи тимчасовий файл
+        test_file = os.path.join(directory, "test_permissions.txt")
+        with open(test_file, "w") as f:
+            f.write("test")
+        os.remove(test_file)
+        return True
+    except Exception as e:
+        print(f"Помилка перевірки прав доступу до {directory}: {e}")
+        return False
+
+# Функції для автоматичної установки Java (перенесені з java_installer.py)
+def check_java():
+    """Перевіряє, чи встановлена Java на комп'ютері."""
+    try:
+        # Спробуємо виконати команду java -version
+        result = subprocess.run(["java", "-version"], capture_output=True, text=True, check=True)
+        # Якщо команда успішна, Java встановлена
+        print("Java вже встановлена:")
+        print(result.stderr)  # java -version виводить інформацію у stderr
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("Java не знайдена на комп'ютері.")
+        return False
+
+def download_and_install_java(install_dir):
+    """
+    Завантажує і встановлює Java (Adoptium Temurin) у вказану директорію.
+    Повертає шлях до папки з Java (де знаходиться bin/java).
+    """
+    # Визначаємо архітектуру і ОС
+    system = platform.system().lower()
+    arch = platform.machine().lower()
+    
+    if system == "windows":
+        if "64" in arch:
+            # Для Windows 64-bit
+            java_url = "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.6%2B7/OpenJDK21U-jdk_x64_windows_hotspot_21.0.6_7.zip"
+            java_filename = "OpenJDK21U-jdk_x64_windows_hotspot_21.0.6_7.zip"
+        else:
+            print("Цей код підтримує лише 64-бітні версії Windows.")
+            sys.exit(1)
+    elif system == "linux":
+        if "64" in arch:
+            java_url = "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.6%2B7/OpenJDK21U-jdk_x64_linux_hotspot_21.0.6_7.tar.gz"
+            java_filename = "OpenJDK21U-jdk_x64_linux_hotspot_21.0.6_7.tar.gz"
+        else:
+            print("Цей код підтримує лише 64-бітні версії Linux.")
+            sys.exit(1)
+    elif system == "darwin":  # macOS
+        if "arm" in arch:
+            java_url = "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.6%2B7/OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.6_7.tar.gz"
+            java_filename = "OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.6_7.tar.gz"
+        else:
+            java_url = "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.6%2B7/OpenJDK21U-jdk_x64_mac_hotspot_21.0.6_7.tar.gz"
+            java_filename = "OpenJDK21U-jdk_x64_mac_hotspot_21.0.6_7.tar.gz"
+    else:
+        print(f"Операційна система {system} не підтримується.")
+        sys.exit(1)
+
+    # Створюємо директорію для Java, якщо її немає
+    os.makedirs(install_dir, exist_ok=True)
+    java_zip_path = os.path.join(install_dir, java_filename)
+
+    # Завантажуємо Java
+    print(f"Завантажуємо Java з {java_url}...")
+    response = requests.get(java_url, stream=True)
+    with open(java_zip_path, "wb") as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                f.write(chunk)
+    print(f"Java завантажено: {java_zip_path}")
+
+    # Розпаковуємо архів
+    print("Розпаковуємо Java...")
+    if java_filename.endswith(".zip"):
+        with zipfile.ZipFile(java_zip_path, "r") as zip_ref:
+            zip_ref.extractall(install_dir)
+    elif java_filename.endswith(".tar.gz"):
+        with tarfile.open(java_zip_path, "r:gz") as tar_ref:
+            tar_ref.extractall(install_dir)
+    print("Java розпаковано.")
+
+    # Видаляємо завантажений архів
+    os.remove(java_zip_path)
+
+    # Знаходимо папку з Java (наприклад, jdk-21.0.6+7)
+    java_home = None
+    for item in os.listdir(install_dir):
+        item_path = os.path.join(install_dir, item)
+        if os.path.isdir(item_path) and "jdk" in item.lower():
+            java_home = item_path
+            break
+
+    if not java_home:
+        print("Не вдалося знайти папку з Java після розпакування.")
+        sys.exit(1)
+
+    # Перевіряємо, чи працює Java
+    java_bin = os.path.join(java_home, "bin", "java")
+    if system == "windows":
+        java_bin += ".exe"
+    try:
+        result = subprocess.run([java_bin, "-version"], capture_output=True, text=True, check=True)
+        print("Java успішно встановлена:")
+        print(result.stderr)
+        return java_home
+    except subprocess.CalledProcessError as e:
+        print(f"Помилка при перевірці Java: {e}")
+        sys.exit(1)
+
+def ensure_java():
+    """
+    Перевіряє наявність Java і встановлює її, якщо вона відсутня.
+    Повертає шлях до Java (JAVA_HOME) або None, якщо використовується системна Java.
+    """
+    # Перевіряємо, чи Java вже встановлена
+    if check_java():
+        return None  # Використовуємо системну Java
+
+    # Визначаємо директорію для встановлення Java
+    install_dir = os.path.join(os.path.expanduser("~"), "custom_java")
+    print(f"Java буде встановлена в {install_dir}")
+
+    # Завантажуємо і встановлюємо Java
+    java_home = download_and_install_java(install_dir)
+    return java_home
+
+# Функція, яка викликається після завершення запуску Minecraft
+def on_launch_complete(success, message):
     global is_loading
     is_loading = False
+    if success:
+        print(f"Запуск успішний: {message}")
+        # Перевіряємо наявність latest.log
+        logs_dir = os.path.join(minecraft_directory, "logs")
+        latest_log = os.path.join(logs_dir, "latest.log")
+        if os.path.exists(latest_log):
+            print(f"Лог створено: {latest_log}")
+        else:
+            print("Попередження: latest.log не створено. Можливо, гра не запустилася коректно.")
+    else:
+        print(f"Помилка при запуску: {message}")
 
 # Функція для створення тексту
 def draw_text(text, font, color, surface, x, y):
@@ -173,7 +347,7 @@ def draw_settings_button(surface, rect, text, font, color, text_color, pressed=F
     else:
         button_color = color
     pygame.draw.rect(surface, button_color, rect, border_radius=15)
-    draw_text(text, font, text_color, surface, rect.x + 20, rect.y + 10)
+    draw_text(text, font, text_color, surface, rect.x + 20, rect.y + (rect.height - font.get_height()) // 2)  # Центруємо текст по вертикалі
 
 # Функція для створення кнопки-іконки (соцмережі)
 def draw_icon_button(icon, x, y, target_width):
@@ -194,7 +368,7 @@ def draw_loading_text():
 def draw_input_field(surface, rect, text, active, label):
     color = LIGHT_PURPLE if active else GRAY
     pygame.draw.rect(surface, color, rect, border_radius=10)
-    draw_text(text, input_font, DARK_PURPLE, surface, rect.x + 10, rect.y + 10)
+    draw_text(text, input_font, DARK_PURPLE, surface, rect.x + 10, rect.y + (rect.height - input_font.get_height()) // 2)  # Центруємо текст
     draw_text(label, input_font, WHITE, surface, rect.x, rect.y - 40)
 
 # Функція для малювання слайдера RAM
@@ -234,21 +408,68 @@ def set_minecraft_options(directory, language, ram):
         f.writelines(lines)
     print(f"Налаштування збережено: мова={language}, RAM={ram}G у {options_path}")
 
+# Функція для вибору скіна
+def choose_skin():
+    global skin_path, skin_image
+    # Створюємо папку skins, якщо її немає
+    skins_dir = "skins"
+    os.makedirs(skins_dir, exist_ok=True)
+    
+    # Відкриваємо діалог вибору файлу
+    file_path = filedialog.askopenfilename(
+        initialdir=skins_dir,
+        title="Choose a Skin",
+        filetypes=[("PNG files", "*.png")]
+    )
+    
+    if file_path:
+        # Зберігаємо шлях до скіна
+        skin_path = file_path
+        try:
+            # Завантажуємо скін для відображення
+            skin_image = pygame.image.load(skin_path)
+            skin_image = pygame.transform.scale(skin_image, (64, 64))
+            print(f"Вибрано скін: {skin_path}")
+            
+            # Копіюємо скін у папку Minecraft
+            minecraft_dir = input_path_text
+            target_skin_path = os.path.join(minecraft_dir, "skin.png")
+            os.makedirs(minecraft_dir, exist_ok=True)
+            shutil.copy(skin_path, target_skin_path)
+            print(f"Скін скопійовано до: {target_skin_path}")
+            
+            # Зберігаємо шлях до скіна в конфігурацію
+            save_config(input_path_text, input_username_text, current_language, ram_value, skin_path)
+        except Exception as e:
+            print(f"Помилка при завантаженні скіна: {e}")
+            skin_image = None
+
 # Функція для малювання вікна налаштувань
 def draw_settings_window(mouse_pos, left_pressed, ram_dragging):
     settings_window.fill(PURPLE)
-    draw_text("Settings", settings_title_font, WHITE, settings_window, 400, 50)
+    draw_text("Settings", settings_title_font, WHITE, settings_window, 400, 30)
+    
+    # Поля вводу
     draw_input_field(settings_window, input_path_rect, input_path_text, input_path_active, "Minecraft Directory")
     draw_input_field(settings_window, input_username_rect, input_username_text, input_username_active, "Username")
 
     settings_mouse_pos = (mouse_pos[0] - (WINDOW_WIDTH - SETTINGS_WINDOW_WIDTH) // 2, mouse_pos[1] - (WINDOW_HEIGHT - SETTINGS_WINDOW_HEIGHT) // 2)
     
+    # Кнопки для вибору мови
     is_english_pressed = english_button_rect.collidepoint(settings_mouse_pos) and left_pressed
     is_ukrainian_pressed = ukrainian_button_rect.collidepoint(settings_mouse_pos) and left_pressed
+    is_choose_skin_pressed = choose_skin_button_rect.collidepoint(settings_mouse_pos) and left_pressed
     draw_settings_button(settings_window, english_button_rect, "English", button_font, WHITE, DARK_PURPLE, pressed=is_english_pressed)
-    draw_settings_button(settings_window, ukrainian_button_rect, "Українська", button_font, WHITE, DARK_PURPLE, pressed=is_ukrainian_pressed)
+    draw_settings_button(settings_window, ukrainian_button_rect, "ukranian", button_font, WHITE, DARK_PURPLE, pressed=is_ukrainian_pressed)  # Змінено текст
+    draw_settings_button(settings_window, choose_skin_button_rect, "Choose Skin", button_font, WHITE, DARK_PURPLE, pressed=is_choose_skin_pressed)
     
+    # Слайдер RAM
     draw_ram_slider(settings_window, ram_slider_rect, ram_value, RAM_MIN, RAM_MAX, ram_dragging)
+    
+    # Відображаємо скін, якщо він вибраний
+    if skin_image:
+        draw_text("Current Skin:", input_font, WHITE, settings_window, 750, 350)
+        settings_window.blit(skin_image, (750, 390))
     
     window.blit(settings_window, ((WINDOW_WIDTH - SETTINGS_WINDOW_WIDTH) // 2, (WINDOW_HEIGHT - SETTINGS_WINDOW_HEIGHT) // 2))
 
@@ -259,7 +480,6 @@ settings_icon = pygame.image.load("source/images/WU_space.png")
 logo_icon = pygame.image.load("source/images/WU_logo.png")
 instagram_icon = pygame.image.load("source/images/WU_instagram.png")
 tiktok_icon = pygame.image.load("source/images/WU_tiktok.png")
-profile_icon = pygame.image.load("source/images/WU_planet.png")
 
 # Зміна розміру хмари
 base_height = WINDOW_HEIGHT
@@ -268,22 +488,17 @@ new_height = int(base_height * scale_factor)
 new_width = int(cloud_image.get_width() * (new_height / cloud_image.get_height()))
 cloud_image = pygame.transform.scale(cloud_image, (new_width, new_height))
 
-# Зміна розміру іконки профілю
-profile_icon_width = 40
-profile_icon_height = int(profile_icon_width * (profile_icon.get_height() / profile_icon.get_width()))
-profile_icon = pygame.transform.scale(profile_icon, (profile_icon_width, profile_icon_height))
-
 # Визначення прямокутників для кнопок і полів вводу
 play_rect = pygame.Rect(100, 300, 400, 100)
 settings_rect = pygame.Rect(100, 420, 400, 100)
 mods_rect = pygame.Rect(100, 540, 400, 100)
 exit_rect = pygame.Rect(100, 660, 400, 100)
-profile_rect = pygame.Rect(WINDOW_WIDTH - 280, 30, 250, 60)
-input_path_rect = pygame.Rect(50, 150, 900, 50)
-input_username_rect = pygame.Rect(50, 230, 900, 50)
-english_button_rect = pygame.Rect(50, 310, 400, 100)
-ukrainian_button_rect = pygame.Rect(550, 310, 400, 100)
-ram_slider_rect = pygame.Rect(50, 460, 700, 20)
+input_path_rect = pygame.Rect(50, 100, 900, 50)
+input_username_rect = pygame.Rect(50, 200, 900, 50)
+english_button_rect = pygame.Rect(50, 300, 300, 60)  # Збільшено розмір для більшої підкладки
+ukrainian_button_rect = pygame.Rect(400, 300, 300, 60)  # Збільшено розмір для більшої підкладки
+choose_skin_button_rect = pygame.Rect(750, 300, 200, 60)  # Збільшено розмір для більшої підкладки
+ram_slider_rect = pygame.Rect(50, 400, 600, 20)
 
 # Функція для запуску Minecraft із Forge при натисканні кнопки
 def on_play_button_clicked():
@@ -292,10 +507,57 @@ def on_play_button_clicked():
     fake_auth["username"] = input_username_text
     set_minecraft_options(minecraft_directory, current_language, ram_value)
     add_predefined_server(minecraft_directory)
+    
+    # Перевіряємо права доступу до папки logs
+    logs_dir = os.path.join(minecraft_directory, "logs")
+    if not check_directory_permissions(logs_dir):
+        print("Попередження: Немає прав доступу до папки logs. Логи можуть не створюватися.")
+    
+    # Закоментовуємо код, пов’язаний зі скінами, оскільки ми поки не працюємо з ними
+    """
+    # Перевіряємо CustomSkinLoader і скін перед запуском
+    if check_custom_skin_loader(minecraft_directory):
+        if check_skin_file(minecraft_directory):
+            print("Скін готовий до використання.")
+            # Налаштовуємо CustomSkinLoader перед запуском гри
+            configure_custom_skin_loader(minecraft_directory)
+        else:
+            print("Попередження: Скін не готовий. CustomSkinLoader може не завантажити скін.")
+    else:
+        print("Попередження: CustomSkinLoader не налаштовано. Скін не буде відображатися.")
+    """
+    
+    # Перевіряємо і встановлюємо Java, якщо потрібно
+    java_home = ensure_java()  # Викликаємо функцію напряму, без java_installer
+    if java_home:
+        print(f"Використовуємо локальну Java: {java_home}")
+    else:
+        print("Використовуємо системну Java.")
+    
     print(f"Запускаємо Forge з параметрами: directory={minecraft_directory}, version={minecraft_version}, forge={forge_version}, username={fake_auth['username']}")
     is_loading = True
-    thread = threading.Thread(target=install_and_launch_forge, args=(minecraft_directory, minecraft_version, forge_version, fake_auth, on_launch_complete))
+    thread = threading.Thread(target=install_and_launch_forge, args=(minecraft_directory, minecraft_version, forge_version, fake_auth, on_launch_complete, java_home))
     thread.start()
+
+# Функція для відкриття папки з модами
+def open_mods_folder():
+    global minecraft_directory
+    mods_dir = os.path.join(minecraft_directory, "mods")
+    # Створюємо папку, якщо її ще немає
+    os.makedirs(mods_dir, exist_ok=True)
+    try:
+        # Для Windows
+        if os.name == "nt":
+            os.startfile(mods_dir)
+        # Для macOS
+        elif sys.platform == "darwin":
+            subprocess.run(["open", mods_dir])
+        # Для Linux
+        else:
+            subprocess.run(["xdg-open", mods_dir])
+        print(f"Відкрито папку з модами: {mods_dir}")
+    except Exception as e:
+        print(f"Помилка при відкритті папки з модами: {e}")
 
 # Основний цикл
 running = True
@@ -306,7 +568,7 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-            save_config(input_path_text, input_username_text, current_language, ram_value)
+            save_config(input_path_text, input_username_text, current_language, ram_value, skin_path)
         elif event.type == pygame.MOUSEBUTTONDOWN:
             mouse_pos = event.pos
             if play_rect.collidepoint(mouse_pos):
@@ -314,12 +576,10 @@ while running:
             elif settings_rect.collidepoint(mouse_pos):
                 settings_open = True
             elif mods_rect.collidepoint(mouse_pos):
-                print("mods button clicked!")
+                open_mods_folder()
             elif exit_rect.collidepoint(mouse_pos):
                 running = False
-                save_config(input_path_text, input_username_text, current_language, ram_value)
-            elif profile_rect.collidepoint(mouse_pos):
-                print("Profile button clicked!")
+                save_config(input_path_text, input_username_text, current_language, ram_value, skin_path)
             elif logo_button.collidepoint(mouse_pos):
                 webbrowser.open("https://webuniverseua.com/showend")
             elif instagram_button.collidepoint(mouse_pos):
@@ -337,11 +597,13 @@ while running:
                 elif english_button_rect.collidepoint(settings_pos):
                     current_language = "en_us"
                     set_minecraft_options(input_path_text, current_language, ram_value)
-                    save_config(input_path_text, input_username_text, current_language, ram_value)
+                    save_config(input_path_text, input_username_text, current_language, ram_value, skin_path)
                 elif ukrainian_button_rect.collidepoint(settings_pos):
                     current_language = "uk_ua"
                     set_minecraft_options(input_path_text, current_language, ram_value)
-                    save_config(input_path_text, input_username_text, current_language, ram_value)
+                    save_config(input_path_text, input_username_text, current_language, ram_value, skin_path)
+                elif choose_skin_button_rect.collidepoint(settings_pos):
+                    choose_skin()  # Викликаємо функцію вибору скіна
                 elif ram_slider_rect.collidepoint(settings_pos):
                     ram_dragging = True
                 elif not pygame.Rect(0, 0, SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT).collidepoint(settings_pos):
@@ -351,7 +613,7 @@ while running:
         elif event.type == pygame.MOUSEBUTTONUP:
             if ram_dragging:
                 ram_dragging = False
-                save_config(input_path_text, input_username_text, current_language, ram_value)
+                save_config(input_path_text, input_username_text, current_language, ram_value, skin_path)
         elif event.type == pygame.MOUSEMOTION and ram_dragging:
             settings_pos = (event.pos[0] - (WINDOW_WIDTH - SETTINGS_WINDOW_WIDTH) // 2, event.pos[1] - (WINDOW_HEIGHT - SETTINGS_WINDOW_HEIGHT) // 2)
             slider_pos = max(ram_slider_rect.x, min(settings_pos[0], ram_slider_rect.x + ram_slider_rect.width))
@@ -361,7 +623,7 @@ while running:
             if input_path_active:
                 if event.key == pygame.K_RETURN:
                     input_path_active = False
-                    save_config(input_path_text, input_username_text, current_language, ram_value)
+                    save_config(input_path_text, input_username_text, current_language, ram_value, skin_path)
                 elif event.key == pygame.K_BACKSPACE:
                     input_path_text = input_path_text[:-1]
                 else:
@@ -369,7 +631,7 @@ while running:
             elif input_username_active:
                 if event.key == pygame.K_RETURN:
                     input_username_active = False
-                    save_config(input_path_text, input_username_text, current_language, ram_value)
+                    save_config(input_path_text, input_username_text, current_language, ram_value, skin_path)
                 elif event.key == pygame.K_BACKSPACE:
                     input_username_text = input_username_text[:-1]
                 else:
@@ -390,17 +652,13 @@ while running:
 
     # Малювання елементів
     window.blit(cloud_image, (0, 0))
-    draw_text("WEB UNIVERSE", title_font, PURPLE, window, 800, 150)
-    draw_text("LAUNCHER", title_font, PURPLE, window, 800, 260)
+    draw_text("WEB UNIVERSE", title_font, PURPLE, window, 900, 150)
+    draw_text("LAUNCHER", title_font, PURPLE, window, 900, 260)
 
     draw_button(play_rect, "PLAY", button_font, PURPLE, WHITE, rocket_icon, pressed=is_play_pressed)
     draw_button(settings_rect, "settings", button_font, PURPLE, WHITE, settings_icon, pressed=is_settings_pressed)
     draw_button(mods_rect, "mods", button_font, PURPLE, WHITE, pressed=is_mods_pressed)
     draw_button(exit_rect, "exit", button_font, PURPLE, WHITE, pressed=is_exit_pressed)
-
-    pygame.draw.rect(window, PURPLE, profile_rect, border_radius=10)
-    draw_text("profile", profile_font, DARK_PURPLE, window, profile_rect.x + 10, profile_rect.y + 10)
-    window.blit(profile_icon, (profile_rect.x + profile_rect.width - 50, profile_rect.y + 5))
 
     logo_button = draw_icon_button(logo_icon, WINDOW_WIDTH - 475, WINDOW_HEIGHT - 150, 125)
     instagram_button = draw_icon_button(instagram_icon, WINDOW_WIDTH - 300, WINDOW_HEIGHT - 150, 80)
