@@ -11,19 +11,10 @@ def setup_minecraft_directory(directory_path):
 
 def install_minecraft_version(version, directory, java_home=None):
     try:
-        # Визначаємо шлях до Java
-        java_bin = "java"
-        if java_home:
-            java_bin = os.path.join(java_home, "bin", "java")
-            if os.name == "nt":  # Для Windows
-                java_bin += ".exe"
-
         # Перевіряємо, чи Minecraft уже встановлено
         installed_versions = mll.utils.get_installed_versions(directory)
         if not any(v["id"] == version for v in installed_versions):
-            # Додаємо java_binary до опцій встановлення
-            options = {"java_binary": java_bin}
-            mll.install.install_minecraft_version(version, directory, options=options)
+            mll.install.install_minecraft_version(version, directory)
             print(f"Версія Minecraft {version} успішно встановлена.")
         else:
             print(f"Версія Minecraft {version} уже встановлена.")
@@ -33,25 +24,16 @@ def install_minecraft_version(version, directory, java_home=None):
 
 def install_forge_version(forge_version, directory, minecraft_version, java_home=None):
     try:
-        # Визначаємо шлях до Java
-        java_bin = "java"
-        if java_home:
-            java_bin = os.path.join(java_home, "bin", "java")
-            if os.name == "nt":  # Для Windows
-                java_bin += ".exe"
-
         # Перевіряємо, чи Forge уже встановлено
         installed_versions = mll.utils.get_installed_versions(directory)
-        forge_full_version = f"{minecraft_version}-forge-{forge_version.split('-')[1]}"  # Наприклад, "1.20.1-forge-47.2.0"
+        forge_full_version = f"{minecraft_version}-forge-{forge_version.split('-')[1]}"  # Наприклад, "1.20.1-forge-47.3.0"
         if not any(v["id"] == forge_full_version for v in installed_versions):
             # Перевіряємо доступні версії Forge
             available_forge_versions = mll.forge.list_forge_versions()
             if forge_version not in available_forge_versions:
                 raise ValueError(f"Forge версія {forge_version} недоступна. Доступні версії: {available_forge_versions[:10]} (перші 10)")
             print(f"Починаємо встановлення Forge {forge_version}...")
-            # Додаємо java_binary до опцій встановлення Forge
-            options = {"java_binary": java_bin}
-            mll.forge.install_forge_version(forge_version, directory, options=options)
+            mll.forge.install_forge_version(forge_version, directory)
             print(f"Forge {forge_version} успішно встановлено.")
         else:
             print(f"Forge {forge_version} уже встановлено.")
@@ -75,7 +57,7 @@ def generate_launch_command(forge_version, directory, auth_data, java_home=None)
     if forge_full_version is None:
         # Якщо find_forge_version не спрацював, шукаємо вручну за номером версії Forge
         installed_versions = mll.utils.get_installed_versions(directory)
-        forge_short_version = forge_version.split('-')[1]  # Отримуємо "47.2.0" із "1.20.1-47.2.0"
+        forge_short_version = forge_version.split('-')[1]  # Отримуємо "47.3.0" із "1.20.1-47.3.0"
         forge_full_version = next((v["id"] for v in installed_versions if "forge" in v["id"] and forge_short_version in v["id"]), None)
         if forge_full_version is None:
             print(f"Встановлені версії в {directory}: {installed_versions}")
@@ -104,27 +86,6 @@ def install_and_launch_forge(directory, minecraft_version, forge_version, auth_d
     install_minecraft_version(minecraft_version, directory, java_home)
     install_forge_version(forge_version, directory, minecraft_version, java_home)
     command = generate_launch_command(forge_version, directory, auth_data, java_home)
-    launch_minecraft(command)
-    if on_complete_callback:
-        on_complete_callback(True, "Minecraft запущено успішно.")
-
-# Залишаю стару функцію для сумісності
-def launch_minecraft_game(directory, version, auth_data, on_complete_callback=None, java_home=None):
-    directory = setup_minecraft_directory(directory)
-    install_minecraft_version(version, directory, java_home)
-    # Об’єднуємо auth_data і java_binary в один словник options
-    java_bin = "java"
-    if java_home:
-        java_bin = os.path.join(java_home, "bin", "java")
-        if os.name == "nt":  # Для Windows
-            java_bin += ".exe"
-    options = {
-        "username": auth_data["username"],
-        "uuid": auth_data["uuid"],
-        "access_token": auth_data["access_token"],
-        "java_binary": java_bin
-    }
-    command = mll.command.get_minecraft_command(version, directory, options)
     launch_minecraft(command)
     if on_complete_callback:
         on_complete_callback(True, "Minecraft запущено успішно.")
